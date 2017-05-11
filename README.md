@@ -5,3 +5,5 @@ sbClient automatically opens downloaded search results; you can use sbClient to 
 sbClient is capable of automatically requesting SearchBot triggers from channel and can combine results from different search types.
 
 More information is available at [sbClient home page](http://dukelupus.com/sbclient).
+
+mUnzip.dll comes presumably from [Info-ZIP](http://www.info-zip.org/) and is licensed under their own BSD-like license: http://www.info-zip.org/pub/infozip/license.html.
