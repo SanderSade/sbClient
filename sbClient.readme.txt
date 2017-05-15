@@ -1,5 +1,7 @@
-No lengthy readme. If you need any help, go to http://www.dukelupus.com - in there is a sbClient homepage with all the help on it. 
+No lengthy readme. 
+If you need any help, go to http://www.dukelupus.com/sbclient - a sbClient homepage with all the help on it. 
 
-As a last resort, send me an e-mail to dukelupus@gmail.com - but beware, that is not my main account and I don't check it often. Please also give your version of sbClient, mIRC and Windows.
+As a last resort, send an e-mail to dukelupus@gmail.com - but beware, this is not my main account and I don't check it often. 
+Please also give your version of sbClient, mIRC and Windows.
 
-DukeLupus
+Thx. DukeLupus
