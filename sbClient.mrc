@@ -66,9 +66,22 @@
 ; fixed clipboard multiline-copy missing a crlf
 ; 2.23.22
 ; Improved bugfix applied in 2.23.20
+; 2.23.23
+; Removed workaround for v1.8.3 dll bugs, using new v2+ dll instead.
+; Updated sbClient.dll to v2.0.2
+; 2.23.24
+; fixed clipboard multiline-copy missing a crlf
+; 2.23.25
+; Updated sbClient.dll to v2.0.4.18
+; 2.23.26
+; Updated sbClient.dll to v2.0.4.19
+; 2.23.27
+; added sbClient.mkdir alias to provide error protected mkdir
+; fixed bugs in file recieved event due to file name changes in latest searchbots
+; changed `remove offline nicks` filter in search results window to also remove all non-nick lines
 ;
 
-alias sbClient.version return 2.23.22
+alias sbClient.version return 2.23.27
 
 ; Ook: added shortcut for dll
 alias sbClientdll return $dll($qt($scriptdirsbClient.dll),$1,$2-)
@@ -263,20 +276,6 @@ on *:dialog:sbClient_search:sclick:1: {
       if ($did(11).state) goto chansearch
       halt
     }
-    ; fix for "this is" etc.. fails
-    ; if word found containing "is" is found then remove the actual word "is" from the search.
-    ;if ($regex(%sstring,/\b(?:\S+(is|to)(?:\S+)?|\1\S+)\b/i)) var %sstring = $remtok(%sstring,$regml(1),0,32)
-
-    var %c = 1, %t
-    while ($gettok(%sstring,%c,32) != $null) {
-      var %w = $replace($v1,\E,\\E), %r = /\b((?:\S+\Q $+ %w $+ \E(?:\S+)?|\Q $+ %w $+ \E\S+))\b/i
-      if (($len(%w) < 2) || (!$regex(%sstring,%r))) var %t = $addtok(%t,%w,32)
-      inc %c
-    }
-    if (%t != %sstring) {
-      if ($dialog(sbClient_search)) dialog -t sbClient_search $qt(%sstring) shortened to $qt(%t)
-      var %sstring = %t
-    }
     sbClient.DoLocalSearch %sstring
   }
   :chansearch
@@ -402,13 +401,22 @@ menu @sbClient.* {
     var %cnter = 1
     while (%cnter <= $line($active,0)) {
       var %line = $line($active,%cnter)
-      if ($left(%line,1) == $chr(33)) {
-        if (!$sbClient.Online(%line)) {
-          dline $active %cnter
-          continue
-        }
-        else cline 3 $active %cnter
+      ;if ($left(%line,1) == $chr(33)) {
+      ;  if (!$sbClient.Online(%line)) {
+      ;    dline $active %cnter
+      ;    continue
+      ;  }
+      ;  else cline 3 $active %cnter
+      ;}
+      if ($asc(%line) != 33) {
+        dline $active %cnter
+        continue
       }
+      if (!$sbClient.Online(%line)) {
+        dline $active %cnter
+        continue
+      }
+      else cline 3 $active %cnter
       inc %cnter
     }
     titlebar $active -|- sbClient local search results for $qt(%sbClient.string) -|- $findfile(%sbClient.ListFolder,*.txt,0,1) lists searched -|- $line($active,0) results -|- rclick for options -|-
@@ -431,7 +439,8 @@ menu @sbClient.* {
       var %l = $v1
       if ($sbClient.Online(%l)) cline 10 $active $sline($active,%cnter).ln
       else cline 6 $active $sline($active,%cnter).ln
-      if (%t > 1) clipboard -an $iif($mouse.key & 2,%l,$sbClient.GetFileName(%l))
+      if (%t == 2) clipboard -an $+($crlf,$iif($mouse.key & 2,%l,$sbClient.GetFileName(%l)))
+      elseif (%t > 1) clipboard -an $iif($mouse.key & 2,%l,$sbClient.GetFileName(%l))
       else clipboard -n $iif($mouse.key & 2,%l,$sbClient.GetFileName(%l))
       inc %cnter
     }
@@ -440,7 +449,9 @@ menu @sbClient.* {
   $iif(!$script(AutoGet.mrc), $style(2)) Send to AutoGet 7: {
     var %path = $nofile($script(AutoGet.mrc))
     .fopen MTlisttowaiting $+(",%path,AGwaiting.ini,")
+    if ($fopen(MTlisttowaiting).err) return
     .fseek -l MTlisttowaiting $lines($+(",%path,AGwaiting.ini,"))
+    if ($fopen(MTlisttowaiting).err) return
     var %i = 1, %j = 0
     while (%i <= $sline($active,0)) {
       var %temp = $MTlisttowaiting($sline($active,%i))
@@ -457,7 +468,7 @@ menu @sbClient.* {
   }
   $iif(!$script(vPowerGet.net.mrc), $style(2)) Send to vPowerGet.NET: {
     var %lines = $sline($active,0)
-    if (!%lines) halt
+    if (!%lines) return
     var %cnter = 1
     while (%cnter <= %lines) {
       if ($com(vPG.NET,AddFiles,1,bstr,$sline($active,%cnter)) == 0) echo -s vPG.NET: AddFiles failed
@@ -586,38 +597,46 @@ alias sbClient.DoSearch {
   scon $sbClient.GetNetworkID($1)
   msg $sbClient.GetChannel($1) $($+(%,sbClient.,$1,.trigger),2) $2-
 }
-on *:filercvd:*SearchBot*results*for*: {
-  var %resultdir = $+($mircdir,SearchBot results)
-  if (!$isdir($qt(%resultdir))) .mkdir $qt(%resultdir)
-  if ($right($nopath($filename),4) == .zip) {
-    if (OK isin $dll($scriptdirmUnzip.dll,Unzip,-oM *.txt $qt($filename) $qt(%resultdir))) {
-      if ($sbClient.remove($filename)) var %rfile = $+(",%resultdir,\, SearchBot_results_for_,$replace($mid($nopath($filename),23-),_,$chr(32),.txt.zip,.txt),")
-      else { sbClient.error Unable to remove archive: $filename | halt }
-    }
-    else { sbClient.error Unzipping of the results failed! | halt }
+on *:filercvd:Search*results*for*: {
+  var %resultdir = $+($mircdir,SearchBot results), %fn = $nopath($filename)
+  if (!$isdir(%resultdir)) {
+    if (!$sbClient.mkdir(%resultdir)) { sbClient.error Unable to make folder: %resultdir | halt }
+  }
+  ; try to determine if its a valid results file & not something else.
+  if (!$regex(%fn,/^(Search\w+?)[_\s]results[_\s]for[_\s]/i)) return
+  var %r = $regsubex(%fn,/(Search\w+?)[_\s]results[_\s]for[_\s](.*)$/,$+(\1_results_for_,$chr(1),$replace(\2,_,$chr(32),.txt.zip,.txt)))
+  if ($right(%fn,4) == .zip) {
+    if (OK !isin $dll($scriptdirmUnzip.dll,Unzip,-oM *.txt $qt($filename) $qt(%resultdir))) { sbClient.error Unzipping of the results failed! | halt }
+    if (!$sbClient.remove($filename)) { sbClient.error Unable to remove archive: $filename | halt }
+    ;var %rfile = $+(",%resultdir,\, SearchBot_results_for_,$replace($mid(%fn,23-),_,$chr(32),.txt.zip,.txt),")
+    ;var %rfile = $+(",%resultdir,\,$gettok(%r,1,1),$replace($gettok(%r,2,1),_,$chr(32),.txt.zip,.txt),")
+    var %rfile = $+(",%resultdir,\,$gettok(%r,1,1),$gettok(%r,2,1),")
   }
   else {
-    var %rfile = $+(",%resultdir,$filename,")
+    var %rfile = $+(",%resultdir,%fn,")
     if (!$sbClient.rename($filename,%rfile)) { sbClient.error Unable to move file: $filename | halt }
   }
-  var %a = $replace($nopath(%rfile),_,$chr(32),SearchBot_results_for_,$null,SearchBot results for,$null,.txt,$null,.zip,$null,$chr(32),.)
+  ;var %a = $replace($nopath(%rfile),_,$chr(32),SearchBot_results_for_,$null,SearchBot results for,$null,.txt,$null,.zip,$null,$chr(32),.)
+  var %a = $replace($gettok(%r,2,1),.txt,$null,.zip,$null,$chr(32),.)
   if (%sbClient.Separate) var %window = @sbClient.results. $+ %a
   else var %window = @sbClient.results
   window -ek0lmwz %window Arial 12
   if (!$sbClient.loadbuf(-r %window %rfile)) { sbClient.error Unable to load %rfile | window -c %window | halt }
   sbClient.ColorNicks %window
-  titlebar %window -|- SearchBot results for $qt($remove($nopath(%rfile),SearchBot_results_for_,SearchBot results for,")) -|- Current channel is %sbClient.SearchChannel -|- rclick for options -|-
+  ;titlebar %window -|- SearchBot results for $qt($remove($nopath(%rfile),SearchBot_results_for_,SearchBot results for,")) -|- Current channel is %sbClient.SearchChannel -|- rclick for options -|-
+  ;titlebar %window -|- SearchBot results for $qt($remove($nopath(%rfile),$gettok(%r,1,1),.txt,")) -|- Current channel is %sbClient.SearchChannel -|- rclick for options -|-
+  titlebar %window -|- SearchBot results for $qt($right($left($gettok(%r,2,1),-4),-1)) -|- Current channel is %sbClient.SearchChannel -|- rclick for options -|-
   if (%sbClient.storetxt) {
-    var %filename = $+(",$mircdir,SearchBot results,\,$remove($nopath(%rfile),SearchBot_results_for_,"),")
-    if ($isfile(%filename)) {
-      %filename = $replace(%filename,.txt,$+(.,$asctime(HH-mm-ss),.txt))
-      if (!$sbClient.rename(%rfile,%filename)) sbClient.error Unable to rename %rfile to %filename
-    }
+    ;var %filename = $+(",$mircdir,SearchBot results,\,$remove($nopath(%rfile),SearchBot_results_for_,"),")
+    var %filename = $+(",$mircdir,SearchBot results,\,$gettok(%r,2,1),")
+    var %filename = $replace(%filename,.txt,$+(.,$asctime(yyyy-mm-dd-HH-mm-ss),.txt))
+    if ($isfile(%filename)) var %filename = $replace(%filename,.txt,$+(.,$ticks,.txt))
+    if (!$sbClient.rename(%rfile,%filename)) sbClient.error Unable to rename %rfile to %filename
   }
   elseif (!$sbClient.remove(%rfile)) sbClient.error Unable to remove %rfile
   return
   :error
-  if (*unable to open file*SearchBot_results* iswm $error) {
+  if (*unable to open file*Search*_results* iswm $error) {
     echo 4 -sa [ERROR] Unable to open search results, possible file access restrictions.
     echo 4 -sa [ERROR] Try & manually open the file, if this fails (access denied) look at the security details for the file.
   }
@@ -835,6 +854,13 @@ alias -l sbClient.loadbuf {
   reseterror
   return 0
 }
+alias -l sbClient.mkdir {
+  mkdir $qt($1-)
+  return 1
+  :error
+  reseterror
+  return 0
+}
 on *:KEYDOWN:@sbClient.*:*: {
   if ($keyrpt) return
 
@@ -854,7 +880,8 @@ on *:KEYDOWN:@sbClient.*:*: {
       var %l = $v1
       if ($sbClient.Online(%l)) cline 10 $active $sline($active,%cnter).ln
       else cline 6 $active $sline($active,%cnter).ln
-      if (%t > 1) clipboard -an $iif(!%ctrlc,%l,$sbClient.GetFileName(%l))
+      if (%t == 2) clipboard -an $+($crlf,$iif(!%ctrlc,%l,$sbClient.GetFileName(%l)))
+      elseif (%t > 1) clipboard -an $iif(!%ctrlc,%l,$sbClient.GetFileName(%l))
       else clipboard -n $iif(!%ctrlc,%l,$sbClient.GetFileName(%l))
       inc %cnter
     }
